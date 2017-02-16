@@ -136,6 +136,13 @@ class Device(object):
                      register, results)
         return results
 
+    def readRawList(self, length):
+        """Read a length number of bytes on the bus (without register)."""
+        results = self._bus.read_bytes(self._address, length) 
+        self._logger.debug("Read the following 0x%02X %s",
+                    results)
+        return results
+
     def readRaw8(self):
         """Read an 8-bit value on the bus (without register)."""
         result = self._bus.read_byte(self._address) & 0xFF
