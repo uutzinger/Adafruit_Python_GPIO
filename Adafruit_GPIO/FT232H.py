@@ -164,7 +164,7 @@ class FT232H(GPIO.BaseGPIO):
         self._mpsse_enable()
         self._mpsse_sync()
         # Initialize all GPIO as inputs.
-        self._write('\x80\x00\x00\x82\x00\x00')
+        self._write(b'\x80\x00\x00\x82\x00\x00')
         self._direction = 0x0000
         self._level = 0x0000
 
@@ -181,14 +181,17 @@ class FT232H(GPIO.BaseGPIO):
         # Get modem status. Useful to enable for debugging.
         #ret, status = ftdi.poll_modem_status(self._ctx)
         #if ret == 0:
-        #	logger.debug('Modem status {0:02X}'.format(status))
+        #       logger.debug('Modem status {0:02X}'.format(status))
         #else:
-        #	logger.debug('Modem status error {0}'.format(ret))
+        #       logger.debug('Modem status error {0}'.format(ret))
         length = len(string)
-        ret = ftdi.write_data(self._ctx, string, length)
+        try:
+            ret = ftdi.write_data(self._ctx, string, length)
+        except TypeError:
+            ret = ftdi.write_data(self._ctx, string); #compatible with libFtdi 1.3
         # Log the string that was written in a python hex string format using a very
         # ugly one-liner list comprehension for brevity.
-        #logger.debug('Wrote {0}'.format(''.join(['\\x{0:02X}'.format(ord(x)) for x in string])))
+        #logger.debug('Wrote {0}'.format(''.join(['\\x{0:02X}'.format(x) for x in bytearray(string)])))
         if ret < 0:
             raise RuntimeError('ftdi_write_data failed with error {0}: {1}'.format(ret, ftdi.get_error_string(self._ctx)))
         if ret != length:
@@ -224,7 +227,7 @@ class FT232H(GPIO.BaseGPIO):
             index += ret
             # Buffer is full, return the result data.
             if index >= expected:
-                return str(response)
+                return bytes(response)
             time.sleep(0.01)
         raise RuntimeError('Timeout while polling ftdi_read_data for {0} bytes!'.format(expected))
 
@@ -240,14 +243,14 @@ class FT232H(GPIO.BaseGPIO):
         error response.  Should be called once after enabling MPSSE."""
         # Send a bad/unknown command (0xAB), then read buffer until bad command
         # response is found.
-        self._write('\xAB')
+        self._write(b'\xAB')
         # Keep reading until bad command response (0xFA 0xAB) is returned.
         # Fail if too many read attempts are made to prevent sticking in a loop.
         tries = 0
         sync = False
         while not sync:
             data = self._poll_read(2)
-            if data == '\xFA\xAB':
+            if data == b'\xFA\xAB':
                 sync = True
             tries += 1
             if tries >= max_retries:
@@ -258,20 +261,20 @@ class FT232H(GPIO.BaseGPIO):
         to 30mhz and will pick that speed or the closest speed below it.
         """
         # Disable clock divisor by 5 to enable faster speeds on FT232H.
-        self._write('\x8A')
+        self._write(b'\x8A')
         # Turn on/off adaptive clocking.
         if adaptive:
-            self._write('\x96')
+            self._write(b'\x96')
         else:
-            self._write('\x97')
+            self._write(b'\x97')
         # Turn on/off three phase clock (needed for I2C).
         # Also adjust the frequency for three-phase clocking as specified in section 2.2.4
         # of this document:
         #   http://www.ftdichip.com/Support/Documents/AppNotes/AN_255_USB%20to%20I2C%20Example%20using%20the%20FT232H%20and%20FT201X%20devices.pdf
         if three_phase:
-            self._write('\x8C')
+            self._write(b'\x8C')
         else:
-            self._write('\x8D')
+            self._write(b'\x8D')
         # Compute divisor for requested clock.
         # Use equation from section 3.8.1 of:
         #  http://www.ftdichip.com/Support/Documents/AppNotes/AN_108_Command_Processor_for_MPSSE_and_MCU_Host_Bus_Emulation_Modes.pdf
@@ -281,14 +284,14 @@ class FT232H(GPIO.BaseGPIO):
             divisor = int(divisor*(2.0/3.0))
         logger.debug('Setting clockspeed with divisor value {0}'.format(divisor))
         # Send command to set divisor from low and high byte values.
-        self._write(str(bytearray((0x86, divisor & 0xFF, (divisor >> 8) & 0xFF))))
+        self._write(bytes(bytearray((0x86, divisor & 0xFF, (divisor >> 8) & 0xFF))))
 
     def mpsse_read_gpio(self):
         """Read both GPIO bus states and return a 16 bit value with their state.
         D0-D7 are the lower 8 bits and C0-C7 are the upper 8 bits.
         """
         # Send command to read low byte and high byte.
-        self._write('\x81\x83')
+        self._write(b'\x81\x83')
         # Wait for 2 byte response.
         data = self._poll_read(2)
         # Assemble response into 16 bit value.
@@ -301,11 +304,11 @@ class FT232H(GPIO.BaseGPIO):
         """Return command to update the MPSSE GPIO state to the current direction
         and level.
         """
-        level_low  = chr(self._level & 0xFF)
-        level_high = chr((self._level >> 8) & 0xFF)
-        dir_low  = chr(self._direction & 0xFF)
-        dir_high = chr((self._direction >> 8) & 0xFF)
-        return str(bytearray((0x80, level_low, dir_low, 0x82, level_high, dir_high)))
+        level_low  = (self._level & 0xFF)
+        level_high = ((self._level >> 8) & 0xFF)
+        dir_low  = (self._direction & 0xFF)
+        dir_high = ((self._direction >> 8) & 0xFF)
+        return bytes(bytearray((0x80, level_low, dir_low, 0x82, level_high, dir_high)))
 
     def mpsse_write_gpio(self):
         """Write the current MPSSE GPIO state to the FT232H chip."""
@@ -395,8 +398,8 @@ class SPI(object):
         self._ft232h = ft232h
         # Initialize chip select pin if provided to output high.
         if cs is not None:
-            ft232h.setup(cs, GPIO.OUT)
             ft232h.set_high(cs)
+            ft232h.setup(cs, GPIO.OUT)
         self._cs = cs
         # Initialize clock, mode, and bit order.
         self.set_clock_hz(max_speed_hz)
@@ -467,64 +470,161 @@ class SPI(object):
         """Half-duplex SPI write.  The specified array of bytes will be clocked
         out the MOSI line.
         """
+        #check for hardware limit of FT232H and similar MPSSE chips
+        if (len(data) > 65536):
+            print('the FTDI chip is limited to 65536 bytes (64 KB) of input/output per command!')
+            print('use for loops for larger reads')
+            exit(1)
         # Build command to write SPI data.
         command = 0x10 | (self.lsbfirst << 3) | self.write_clock_ve
         logger.debug('SPI write with command {0:2X}.'.format(command))
         # Compute length low and high bytes.
         # NOTE: Must actually send length minus one because the MPSSE engine
         # considers 0 a length of 1 and FFFF a length of 65536
-        length = len(data)-1
-        len_low  = length & 0xFF
-        len_high = (length >> 8) & 0xFF
+        # splitting into two lists for two commands to prevent buffer errors
+        data1 = data[:len(data)//2]
+        data2 = data[len(data)//2:]
+        len_low1  = (len(data1) - 1) & 0xFF
+        len_high1 = ((len(data1) - 1) >> 8) & 0xFF
+        len_low2  = (len(data2) - 1) & 0xFF
+        len_high2 = ((len(data2) - 1) >> 8) & 0xFF
         self._assert_cs()
-        # Send command and length.
-        self._ft232h._write(str(bytearray((command, len_low, len_high))))
-        # Send data.
-        self._ft232h._write(str(bytearray(data)))
+        # Send command and length, then data, split into two commands, handle for length 1
+        if len(data1) > 0:
+            self._ft232h._write(bytes(bytearray((command, len_low1, len_high1))))
+            self._ft232h._write(bytes(bytearray(data1)))
+        if len(data2) > 0:
+            self._ft232h._write(bytes(bytearray((command, len_low2, len_high2))))
+            self._ft232h._write(bytes(bytearray(data2)))
         self._deassert_cs()
 
     def read(self, length):
         """Half-duplex SPI read.  The specified length of bytes will be clocked
         in the MISO line and returned as a bytearray object.
         """
+        #check for hardware limit of FT232H and similar MPSSE chips
+        if (1 > length > 65536):
+            print('the FTDI chip is limited to 65536 bytes (64 KB) of input/output per command!')
+            print('use for loops for larger reads')
+            exit(1)
         # Build command to read SPI data.
         command = 0x20 | (self.lsbfirst << 3) | (self.read_clock_ve << 2)
         logger.debug('SPI read with command {0:2X}.'.format(command))
         # Compute length low and high bytes.
         # NOTE: Must actually send length minus one because the MPSSE engine
         # considers 0 a length of 1 and FFFF a length of 65536
-        len_low  = (length-1) & 0xFF
-        len_high = ((length-1) >> 8) & 0xFF
+        #force odd numbers to round up instead of down
+        lengthR = length
+        if length % 2 == 1:
+            lengthR += 1
+        lengthR = lengthR//2
+        #when odd length requested, get the remainder instead of the same number
+        lenremain = length - lengthR
+        len_low  = (lengthR - 1) & 0xFF
+        len_high = ((lengthR - 1) >> 8) & 0xFF
         self._assert_cs()
         # Send command and length.
-        self._ft232h._write(str(bytearray((command, len_low, len_high, 0x87))))
+        # Perform twice to prevent error from hardware defect/limits
+        self._ft232h._write(bytes(bytearray((command, len_low, len_high))))
+        payload1 = self._ft232h._poll_read(lengthR)
+        self._ft232h._write(bytes(bytearray((command, len_low, len_high))))
+        payload2 = self._ft232h._poll_read(lenremain)
         self._deassert_cs()
-        # Read response bytes.
-        return bytearray(self._ft232h._poll_read(length))
+        # Read response bytes
+        return bytearray(payload1 + payload2)
+
+    def bulkread(self, data = [], lengthR = 'None', readmode = 1):
+        """Half-duplex SPI write then read. Send command and payload to slave as bytearray
+            then consequently read out response from the slave for length in bytes.
+        Designed for use with NOR or NAND flash chips, and possibly SD cards...etc...
+        Read command is cut in half and performed twice in series to prevent single byte errors.
+        Hardware limits per command are enforced before doing anything.
+        Read length is an optional argument, so that it can function similar to transfer
+            but still half-duplex.
+        For reading without writing, one can send a blank array or skip that argument.
+        """
+        #check for hardware limit of FT232H and similar MPSSE chips
+        if (1 > lengthR > 65536)|(len(data) > 65536):
+            print('the FTDI chip is limited to 65536 bytes (64 KB) of input/output per command!')
+            print('use for loops for larger reads')
+            exit(1)
+        #default mode is to act like `transfer` but half-duplex
+        if (lengthR == 'None')&(readmode == 1):
+            lengthR = len(data)
+        #command parameters definition and math
+        #MPSSE engine sees length 0 as 1 byte, so - 1 lengths
+        commandW = 0x10 | (self.lsbfirst << 3) | self.write_clock_ve
+        lengthW = len(data) - 1
+        len_lowW  = (lengthW) & 0xFF
+        len_highW = ((lengthW) >> 8) & 0xFF
+        commandR = 0x20 | (self.lsbfirst << 3) | (self.read_clock_ve << 2)
+        #force odd numbers to round up instead of down
+        length = lengthR
+        if lengthR % 2 == 1:
+            length += 1
+        length = length//2
+        #when odd length requested, get the remainder instead of the same number
+        lenremain = lengthR - length
+        len_lowR  = (length - 1) & 0xFF
+        len_highR = ((length - 1) >> 8) & 0xFF
+        #logger debug info
+        logger.debug('SPI bulkread with write command {0:2X}.'.format(commandW))
+        logger.debug('and read command {0:2X}.'.format(commandR))
+        #begin command set
+        self._assert_cs()
+        #write command, these have to be separated due to TypeError
+        self._ft232h._write(bytes(bytearray((commandW, len_lowW, len_highW))))
+        self._ft232h._write(bytes(bytearray(data)))
+        #read command, which is divided into two commands
+        self._ft232h._write(bytes(bytearray((commandR, len_lowR, len_highR))))
+        payload1 = self._ft232h._poll_read(length)
+        self._ft232h._write(bytes(bytearray((commandR, len_lowR, len_highR))))
+        payload2 = self._ft232h._poll_read(lenremain)
+        self._deassert_cs()
+        #end command set
+        # Read response bytes
+        return bytearray(payload1 + payload2)
 
     def transfer(self, data):
         """Full-duplex SPI read and write.  The specified array of bytes will be
         clocked out the MOSI line, while simultaneously bytes will be read from
         the MISO line.  Read bytes will be returned as a bytearray object.
         """
+        #check for hardware limit of FT232H and similar MPSSE chips
+        if (len(data) > 65536):
+            print('the FTDI chip is limited to 65536 bytes (64 KB) of input/output per command!')
+            print('use for loops for larger reads')
+            exit(1)
         # Build command to read and write SPI data.
         command = 0x30 | (self.lsbfirst << 3) | (self.read_clock_ve << 2) | self.write_clock_ve
         logger.debug('SPI transfer with command {0:2X}.'.format(command))
         # Compute length low and high bytes.
         # NOTE: Must actually send length minus one because the MPSSE engine
         # considers 0 a length of 1 and FFFF a length of 65536
-        length = len(data)
-        len_low  = (length-1) & 0xFF
-        len_high = ((length-1) >> 8) & 0xFF
-        # Send command and length.
+        data1 = data[:len(data)//2]
+        data2 = data[len(data)//2:]
+        len_low1  = (len(data1) - 1) & 0xFF
+        len_high1 = ((len(data1) - 1) >> 8) & 0xFF
+        len_low2  = (len(data2) - 1) & 0xFF
+        len_high2 = ((len(data2) - 1) >> 8) & 0xFF
+        payload1 = ''
+        payload2 = ''
+        #start command set
         self._assert_cs()
-        self._ft232h._write(str(bytearray((command, len_low, len_high))))
-        self._ft232h._write(str(bytearray(data)))
-        self._ft232h._write('\x87')
+        # Perform twice to prevent error from hardware defect/limits
+        # Send command and length, then data, split into two commands, handle for length 1
+        if len(data1) > 0:
+            self._ft232h._write(bytes(bytearray((command, len_low1, len_high1))))
+            self._ft232h._write(bytes(bytearray(data1)))
+            payload1 = self._ft232h._poll_read(len(data1))
+        if len(data2) > 0:
+            self._ft232h._write(bytes(bytearray((command, len_low2, len_high2))))
+            self._ft232h._write(bytes(bytearray(data2)))
+            payload2 = self._ft232h._poll_read(len(data2))
+        #self._ft232h._write('\x87')
         self._deassert_cs()
         # Read response bytes.
-        return bytearray(self._ft232h._poll_read(length))
-
+        return bytearray(payload1 + payload2)
 
 class I2CDevice(object):
     """Class for communicating with an I2C device using the smbus library.
@@ -542,7 +642,7 @@ class I2CDevice(object):
         # Enable drive-zero mode to drive outputs low on 0 and tri-state on 1.
         # This matches the protocol for I2C communication so multiple devices can
         # share the I2C bus.
-        self._ft232h._write('\x9E\x07\x00')
+        self._ft232h._write(b'\x9E\x07\x00')
         self._idle()
 
     def _idle(self):
@@ -560,9 +660,9 @@ class I2CDevice(object):
     def _transaction_end(self):
         """End I2C transaction and get response bytes, including ACKs."""
         # Ask to return response bytes immediately.
-        self._command.append('\x87')
+        self._command.append(b'\x87')
         # Send the entire command to the MPSSE.
-        self._ft232h._write(''.join(self._command))
+        self._ft232h._write(b''.join(self._command))
         # Read response bytes and return them.
         return bytearray(self._ft232h._poll_read(self._expected))
 
@@ -603,12 +703,12 @@ class I2CDevice(object):
         """
         for i in range(length-1):
             # Read a byte and send ACK.
-            self._command.append('\x20\x00\x00\x13\x00\x00')
+            self._command.append(b'\x20\x00\x00\x13\x00\x00')
             # Make sure pins are back in idle state with clock low and data high.
             self._ft232h.output_pins({0: GPIO.LOW, 1: GPIO.HIGH}, write=False)
             self._command.append(self._ft232h.mpsse_gpio())
         # Read last byte and send NAK.
-        self._command.append('\x20\x00\x00\x13\x00\xFF')
+        self._command.append(b'\x20\x00\x00\x13\x00\xFF')
         # Make sure pins are back in idle state with clock low and data high.
         self._ft232h.output_pins({0: GPIO.LOW, 1: GPIO.HIGH}, write=False)
         self._command.append(self._ft232h.mpsse_gpio())
@@ -619,12 +719,12 @@ class I2CDevice(object):
         """Write the specified number of bytes to the chip."""
         for byte in data:
             # Write byte.
-            self._command.append(str(bytearray((0x11, 0x00, 0x00, byte))))
+            self._command.append(bytes(bytearray((0x11, 0x00, 0x00, byte))))
             # Make sure pins are back in idle state with clock low and data high.
             self._ft232h.output_pins({0: GPIO.LOW, 1: GPIO.HIGH}, write=False)
             self._command.append(self._ft232h.mpsse_gpio() * _REPEAT_DELAY)
             # Read bit for ACK/NAK.
-            self._command.append('\x22\x00')
+            self._command.append(b'\x22\x00')
         # Increase expected response bytes.
         self._expected += len(data)
 
