@@ -16,6 +16,8 @@ except ImportError:
     ensurepip.bootstrap()
     from setuptools import setup, find_packages
 
+# Define required packages.
+requires = ['adafruit-pureio']
 
 # Assume spidev is required on non-windows & non-mac platforms (i.e. linux).
 if sys.platform != 'win32' and sys.platform != 'darwin':
@@ -28,7 +30,6 @@ setup(name              = 'Adafruit_GPIO',
       description       = 'Library to provide a cross-platform GPIO interface on the Raspberry Pi and Beaglebone Black using the RPi.GPIO and Adafruit_BBIO libraries.',
       license           = 'MIT',
       url               = 'https://github.com/uutzinger/Adafruit_Python_GPIO/',
-      dependency_links  = 'https://github.com/adafruit/Adafruit_Python_PureIO.git',
-      install_requires  = 'Adafruit_PureIO',
+      install_requires  = requires,
       test_suite        = 'tests',
       packages          = find_packages())
